@@ -35,9 +35,11 @@ from .base import (
     DocStatus,
 )
 
+from .kg.no_op_graph_impl import NoOpGraphStorage
 from .prompt import GRAPH_FIELD_SEP
 
 STORAGES = {
+    "NoOpGraphStorage": ".kg.no_op_graph_impl",
     "NetworkXStorage": ".kg.networkx_impl",
     "JsonKVStorage": ".kg.json_kv_impl",
     "NanoVectorDBStorage": ".kg.nano_vector_db_impl",
@@ -231,7 +233,7 @@ class LightRAG:
 
         self.llm_response_cache = self.key_string_value_json_storage_cls(
             namespace="llm_response_cache",
-            embedding_func=self.embedding_func,
+            embedding_func=None,
         )
 
         ####
@@ -275,7 +277,7 @@ class LightRAG:
         else:
             hashing_kv = self.key_string_value_json_storage_cls(
                 namespace="llm_response_cache",
-                embedding_func=self.embedding_func,
+                embedding_func=None,
             )
 
         self.llm_model_func = limit_async_func_call(self.llm_model_max_async)(
@@ -373,7 +375,7 @@ class LightRAG:
             doc_id
             for doc_id in new_docs.keys()
             if (current_doc := await self.doc_status.get_by_id(doc_id)) is None
-            or current_doc.status == DocStatus.FAILED
+            or current_doc["status"] == DocStatus.FAILED
         }
         new_docs = {k: v for k, v in new_docs.items() if k in _add_doc_keys}
 
@@ -420,65 +422,55 @@ class LightRAG:
                     }
 
                     # Update status with chunks information
-                    doc_status.update(
-                        {
-                            "chunks_count": len(chunks),
-                            "updated_at": datetime.now().isoformat(),
-                        }
-                    )
+                    doc_status.update({
+                        "chunks_count": len(chunks),
+                        "updated_at": datetime.now().isoformat(),
+                    })
                     await self.doc_status.upsert({doc_id: doc_status})
 
                     try:
                         # Store chunks in vector database
                         await self.chunks_vdb.upsert(chunks)
 
-                        # Extract and store entities and relationships
-                        maybe_new_kg = await extract_entities(
-                            chunks,
-                            knowledge_graph_inst=self.chunk_entity_relation_graph,
-                            entity_vdb=self.entities_vdb,
-                            relationships_vdb=self.relationships_vdb,
-                            llm_response_cache=self.llm_response_cache,
-                            global_config=asdict(self),
-                        )
-
-                        if maybe_new_kg is None:
-                            raise Exception(
-                                "Failed to extract entities and relationships"
+                        # Skip entity extraction if using NoOpGraphStorage
+                        if not isinstance(self.chunk_entity_relation_graph, NoOpGraphStorage):
+                            maybe_new_kg = await extract_entities(
+                                chunks,
+                                knowledge_graph_inst=self.chunk_entity_relation_graph,
+                                entity_vdb=self.entities_vdb,
+                                relationships_vdb=self.relationships_vdb,
+                                llm_response_cache=self.llm_response_cache,
+                                global_config=asdict(self),
                             )
 
-                        self.chunk_entity_relation_graph = maybe_new_kg
+                            if maybe_new_kg is None:
+                                raise Exception("Failed to extract entities and relationships")
+
+                            self.chunk_entity_relation_graph = maybe_new_kg
 
                         # Store original document and chunks
-                        await self.full_docs.upsert(
-                            {doc_id: {"content": doc["content"]}}
-                        )
+                        await self.full_docs.upsert({doc_id: {"content": doc["content"]}})
                         await self.text_chunks.upsert(chunks)
 
                         # Update status to processed
-                        doc_status.update(
-                            {
-                                "status": DocStatus.PROCESSED,
-                                "updated_at": datetime.now().isoformat(),
-                            }
-                        )
+                        doc_status.update({
+                            "status": DocStatus.PROCESSED,
+                            "updated_at": datetime.now().isoformat(),
+                        })
                         await self.doc_status.upsert({doc_id: doc_status})
 
                     except Exception as e:
                         # Mark as failed if any step fails
-                        doc_status.update(
-                            {
-                                "status": DocStatus.FAILED,
-                                "error": str(e),
-                                "updated_at": datetime.now().isoformat(),
-                            }
-                        )
+                        doc_status.update({
+                            "status": DocStatus.FAILED,
+                            "error": str(e),
+                            "updated_at": datetime.now().isoformat(),
+                        })
                         await self.doc_status.upsert({doc_id: doc_status})
                         raise e
 
                 except Exception as e:
                     import traceback
-
                     error_msg = f"Failed to process document {doc_id}: {str(e)}\n{traceback.format_exc()}"
                     logger.error(error_msg)
                     continue
@@ -916,7 +908,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_func,
+                    embedding_func=None,
                 ),
                 prompt=prompt,
             )
@@ -933,7 +925,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_func,
+                    embedding_func=None,
                 ),
             )
         elif param.mode == "mix":
@@ -952,7 +944,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_func,
+                    embedding_func=None,
                 ),
             )
         else:
@@ -993,7 +985,7 @@ class LightRAG:
             or self.key_string_value_json_storage_cls(
                 namespace="llm_response_cache",
                 global_config=asdict(self),
-                embedding_func=self.embedding_func,
+                embedding_func=None,
             ),
         )
 
@@ -1024,7 +1016,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_funcne,
+                    embedding_func=None,
                 ),
             )
         elif param.mode == "naive":
@@ -1040,7 +1032,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_func,
+                    embedding_func=None,
                 ),
             )
         elif param.mode == "mix":
@@ -1059,7 +1051,7 @@ class LightRAG:
                 else self.key_string_value_json_storage_cls(
                     namespace="llm_response_cache",
                     global_config=asdict(self),
-                    embedding_func=self.embedding_func,
+                    embedding_func=None,
                 ),
             )
         else:
