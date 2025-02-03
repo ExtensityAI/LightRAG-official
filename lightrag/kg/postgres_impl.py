@@ -274,12 +274,16 @@ class PGKVStorage(BaseKVStorage):
             pass
         elif self.namespace == "full_docs":
             for k, v in data.items():
-                upsert_sql = SQL_TEMPLATES["upsert_doc_full"]
                 _data = {
                     "id": k,
                     "content": v["content"],
                     "workspace": self.db.workspace,
                 }
+                if "doc_name" in v:
+                    upsert_sql = SQL_TEMPLATES["upsert_doc_full_with_doc_name"]
+                    _data["doc_name"] = v["doc_name"]
+                else:
+                    upsert_sql = SQL_TEMPLATES["upsert_doc_full"]
                 await self.db.execute(upsert_sql, _data)
         elif self.namespace == "llm_response_cache":
             for mode, items in data.items():
@@ -447,7 +451,7 @@ class PGDocStatusStorage(DocStatusStorage):
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and id=$2"
         params = {"workspace": self.db.workspace, "id": id}
         result = await self.db.query(sql, params, True)
-        if result is None:
+        if result is None or len(result) == 0:
             return None
         else:
             return DocProcessingStatus(
@@ -1118,9 +1122,10 @@ SQL_TEMPLATES = {
     "get_by_id_full_docs": """SELECT id, COALESCE(content, '') as content
                                 FROM LIGHTRAG_DOC_FULL WHERE workspace=$1 AND id=$2
                             """,
-    "get_by_id_text_chunks": """SELECT id, tokens, COALESCE(content, '') as content,
-                                chunk_order_index, full_doc_id
-                                FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id=$2
+    "get_by_id_text_chunks": """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
+                                c.chunk_order_index, c.full_doc_id, f.doc_name
+                                FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id 
+                                WHERE c.workspace=$1 AND c.id=$2
                             """,
     "get_by_id_llm_response_cache": """SELECT id, original_prompt, COALESCE(return_value, '') as "return", mode
                                 FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND mode=$2
@@ -1131,9 +1136,10 @@ SQL_TEMPLATES = {
     "get_by_ids_full_docs": """SELECT id, COALESCE(content, '') as content
                                  FROM LIGHTRAG_DOC_FULL WHERE workspace=$1 AND id IN ({ids})
                             """,
-    "get_by_ids_text_chunks": """SELECT id, tokens, COALESCE(content, '') as content,
-                                  chunk_order_index, full_doc_id
-                                   FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id IN ({ids})
+    "get_by_ids_text_chunks": """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
+                                  c.chunk_order_index, c.full_doc_id, f.doc_name
+                                  FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id
+                                  WHERE c.workspace=$1 AND c.id IN ({ids})
                                 """,
     "get_by_ids_llm_response_cache": """SELECT id, original_prompt, COALESCE(return_value, '') as "return", mode
                                  FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND mode= IN ({ids})
@@ -1143,6 +1149,11 @@ SQL_TEMPLATES = {
                         VALUES ($1, $2, $3)
                         ON CONFLICT (workspace,id) DO UPDATE
                            SET content = $2, update_time = CURRENT_TIMESTAMP
+                       """,
+    "upsert_doc_full_with_doc_name": """INSERT INTO LIGHTRAG_DOC_FULL (id, content, workspace, doc_name)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (workspace,id) DO UPDATE
+                           SET content = $2, doc_name=$4, update_time = CURRENT_TIMESTAMP
                        """,
     "upsert_llm_response_cache": """INSERT INTO LIGHTRAG_LLM_CACHE(workspace,id,original_prompt,return_value,mode)
                                       VALUES ($1, $2, $3, $4, $5)
@@ -1183,17 +1194,17 @@ SQL_TEMPLATES = {
     # SQL for VectorStorage
     "entities": """SELECT entity_name FROM
         (SELECT id, entity_name, 1 - (content_vector <=> '[{embedding_string}]'::vector) as distance
-        FROM LIGHTRAG_VDB_ENTITY where workspace=$1)
+        FROM LIGHTRAG_VDB_ENTITY where workspace=$1) as entity
         WHERE distance>$2 ORDER BY distance DESC  LIMIT $3
        """,
     "relationships": """SELECT source_id as src_id, target_id as tgt_id FROM
         (SELECT id, source_id,target_id, 1 - (content_vector <=> '[{embedding_string}]'::vector) as distance
-        FROM LIGHTRAG_VDB_RELATION where workspace=$1)
+        FROM LIGHTRAG_VDB_RELATION where workspace=$1) as relation
         WHERE distance>$2 ORDER BY distance DESC  LIMIT $3
        """,
     "chunks": """SELECT id FROM
         (SELECT id, 1 - (content_vector <=> '[{embedding_string}]'::vector) as distance
-        FROM LIGHTRAG_DOC_CHUNKS where workspace=$1)
+        FROM LIGHTRAG_DOC_CHUNKS where workspace=$1) as chunks
         WHERE distance>$2 ORDER BY distance DESC  LIMIT $3
        """,
 }

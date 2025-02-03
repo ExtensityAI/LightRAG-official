@@ -51,6 +51,8 @@ class QueryParam:
     history_turns: int = (
         3  # Number of complete conversation turns (user-assistant pairs) to consider
     )
+    return_doc_names: bool = False
+    return_doc_ids: bool = False
 
 
 @dataclass
@@ -181,6 +183,9 @@ class DocProcessingStatus:
     chunks_count: Optional[int] = None  # Number of chunks after splitting
     error: Optional[str] = None  # Error message if failed
     metadata: Dict[str, Any] = field(default_factory=dict)  # Additional metadata
+    
+    def __getitem__(self, item):
+        return getattr(self, item)
 
 
 class DocStatusStorage(BaseKVStorage):

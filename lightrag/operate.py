@@ -1590,6 +1590,18 @@ async def naive_query(
             cache_type="query",
         ),
     )
+    
+    if query_param.return_doc_names:
+        response = {
+            "response": response,
+            "doc_names": [c["doc_name"] for c in maybe_trun_chunks],
+        }
+    if query_param.return_doc_ids:
+        if not isinstance(response, dict):
+            response={
+                "response": response
+            }
+        response["doc_ids"] = [c["full_doc_id"] for c in maybe_trun_chunks]
 
     return response
 

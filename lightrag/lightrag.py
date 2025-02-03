@@ -339,7 +339,8 @@ class LightRAG:
         )
 
     async def ainsert(
-        self, string_or_strings, split_by_character=None, split_by_character_only=False
+        self, string_or_strings, split_by_character=None, split_by_character_only=False,
+        doc_name: str=None
     ):
         """Insert documents with checkpoint support
 
@@ -365,6 +366,7 @@ class LightRAG:
                 "status": DocStatus.PENDING,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
+                "doc_name": doc_name
             }
             for content in unique_contents
         }
@@ -449,7 +451,7 @@ class LightRAG:
                             self.chunk_entity_relation_graph = maybe_new_kg
 
                         # Store original document and chunks
-                        await self.full_docs.upsert({doc_id: {"content": doc["content"]}})
+                        await self.full_docs.upsert({doc_id: {"content": doc["content"], "doc_name": doc["doc_name"]}})
                         await self.text_chunks.upsert(chunks)
 
                         # Update status to processed
