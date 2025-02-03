@@ -1125,7 +1125,7 @@ SQL_TEMPLATES = {
     "get_by_id_text_chunks": """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
                                 c.chunk_order_index, c.full_doc_id, f.doc_name
                                 FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id 
-                                WHERE c.workspace=$1 AND c.id=$2
+                                WHERE c.workspace=$1 AND f.workspace=$1 AND c.id=$2
                             """,
     "get_by_id_llm_response_cache": """SELECT id, original_prompt, COALESCE(return_value, '') as "return", mode
                                 FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND mode=$2
@@ -1139,7 +1139,7 @@ SQL_TEMPLATES = {
     "get_by_ids_text_chunks": """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
                                   c.chunk_order_index, c.full_doc_id, f.doc_name
                                   FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id
-                                  WHERE c.workspace=$1 AND c.id IN ({ids})
+                                  WHERE c.workspace=$1 AND f.workspace=$1 AND c.id IN ({ids})
                                 """,
     "get_by_ids_llm_response_cache": """SELECT id, original_prompt, COALESCE(return_value, '') as "return", mode
                                  FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND mode= IN ({ids})
