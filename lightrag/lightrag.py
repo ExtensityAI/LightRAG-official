@@ -331,16 +331,16 @@ class LightRAG:
             storage.db = db_client
 
     def insert(
-        self, string_or_strings, split_by_character=None, split_by_character_only=False
+        self, string_or_strings, split_by_character=None, split_by_character_only=False, doc_names=None
     ):
         loop = always_get_an_event_loop()
         return loop.run_until_complete(
-            self.ainsert(string_or_strings, split_by_character, split_by_character_only)
+            self.ainsert(string_or_strings, split_by_character, split_by_character_only, doc_names)
         )
 
     async def ainsert(
         self, string_or_strings, split_by_character=None, split_by_character_only=False,
-        doc_name: str=None
+        doc_names: str=None
     ):
         """Insert documents with checkpoint support
 
@@ -355,7 +355,7 @@ class LightRAG:
             string_or_strings = [string_or_strings]
 
         # 1. Remove duplicate contents from the list
-        unique_contents = list(set(doc.strip() for doc in string_or_strings))
+        unique_contents = list(set((doc.strip(), name) for doc, name in zip(string_or_strings, doc_names)))
 
         # 2. Generate document IDs and initial status
         new_docs = {
@@ -368,7 +368,7 @@ class LightRAG:
                 "updated_at": datetime.now().isoformat(),
                 "doc_name": doc_name
             }
-            for content in unique_contents
+            for content, doc_name in unique_contents
         }
 
         # 3. Filter out already processed documents

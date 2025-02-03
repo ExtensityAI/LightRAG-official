@@ -1536,10 +1536,23 @@ async def naive_query(
         logger.warning("No chunks left after truncation")
         return PROMPTS["fail_response"]
 
+    # Prepare response    
+    if query_param.return_doc_names:
+        query_result = {
+            "doc_names": [c["doc_name"] for c in maybe_trun_chunks],
+        }
+    if query_param.return_doc_ids:
+        if not isinstance(query_result, dict):
+            query_result={}
+        query_result["doc_ids"] = [c["full_doc_id"] for c in maybe_trun_chunks]
+
     logger.info(f"Truncate {len(chunks)} to {len(maybe_trun_chunks)} chunks")
     section = "\n--New Chunk--\n".join([c["content"] for c in maybe_trun_chunks])
 
     if query_param.only_need_context:
+        if query_result:
+            query_result["response"] = section
+            return query_result
         return section
 
     # Process conversation history
@@ -1557,6 +1570,9 @@ async def naive_query(
     )
 
     if query_param.only_need_prompt:
+        if query_result:
+            query_result["response"] = sys_prompt
+            return query_result
         return sys_prompt
 
     response = await use_model_func(
@@ -1591,17 +1607,9 @@ async def naive_query(
         ),
     )
     
-    if query_param.return_doc_names:
-        response = {
-            "response": response,
-            "doc_names": [c["doc_name"] for c in maybe_trun_chunks],
-        }
-    if query_param.return_doc_ids:
-        if not isinstance(response, dict):
-            response={
-                "response": response
-            }
-        response["doc_ids"] = [c["full_doc_id"] for c in maybe_trun_chunks]
+    if query_result:
+        query_result["response"] = response
+        return query_result
 
     return response
 
