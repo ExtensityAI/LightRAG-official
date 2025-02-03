@@ -355,7 +355,10 @@ class LightRAG:
             string_or_strings = [string_or_strings]
 
         # 1. Remove duplicate contents from the list
-        unique_contents = list(set((doc.strip(), name) for doc, name in zip(string_or_strings, doc_names)))
+        if doc_names is not None:
+            unique_contents = list(set((doc.strip(), name) for doc, name in zip(string_or_strings, doc_names)))
+        else:
+            unique_contents = list(set((doc.strip(), None) for doc in string_or_strings))
 
         # 2. Generate document IDs and initial status
         new_docs = {
