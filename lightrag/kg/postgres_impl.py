@@ -82,16 +82,28 @@ class PostgreSQLDB:
     async def check_tables(self):
         for k, v in TABLES.items():
             try:
+                logger.info(f"Checking if table {k} exists...")
                 await self.query("SELECT 1 FROM {k} LIMIT 1".format(k=k))
+                logger.info(f"Table {k} exists")
             except Exception as e:
                 logger.error(f"Failed to check table {k} in PostgreSQL database")
                 logger.error(f"PostgreSQL database error: {e}")
                 try:
-                    await self.execute(v["ddl"])
-                    logger.info(f"Created table {k} in PostgreSQL database")
+                    logger.info(f"Attempting to create table {k}")
+                    # First check if pgvector extension is installed
+                    if 'vector' in v['ddl'].lower():
+                        await self.execute('CREATE EXTENSION IF NOT EXISTS vector;')
+                        logger.info("Created pgvector extension")
+
+                    await self.execute(v['ddl'])
+
+                    # Verify the table was actually created
+                    await self.query("SELECT 1 FROM {k} LIMIT 1".format(k=k))
+                    logger.info(f"Successfully created and verified table {k}")
                 except Exception as e:
                     logger.error(f"Failed to create table {k} in PostgreSQL database")
                     logger.error(f"PostgreSQL database error: {e}")
+                    raise  # Re-raise the exception to fail fast
 
         logger.info("Finished checking all tables in PostgreSQL database")
 
@@ -1124,7 +1136,7 @@ SQL_TEMPLATES = {
                             """,
     "get_by_id_text_chunks": """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
                                 c.chunk_order_index, c.full_doc_id, f.doc_name
-                                FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id 
+                                FROM LIGHTRAG_DOC_CHUNKS c JOIN lightrag_doc_full f ON f.id = c.full_doc_id
                                 WHERE c.workspace=$1 AND f.workspace=$1 AND c.id=$2
                             """,
     "get_by_id_llm_response_cache": """SELECT id, original_prompt, COALESCE(return_value, '') as "return", mode
