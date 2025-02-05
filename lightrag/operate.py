@@ -1536,7 +1536,7 @@ async def naive_query(
         logger.warning("No chunks left after truncation")
         return PROMPTS["fail_response"]
 
-    # Prepare response    
+    # Prepare response
     if query_param.return_doc_names:
         query_result = {
             "doc_names": [c["doc_name"] for c in maybe_trun_chunks],
@@ -1551,9 +1551,9 @@ async def naive_query(
 
     if query_param.only_need_context:
         if query_result:
-            query_result["response"] = section
+            query_result["response"] = [c["content"] for c in maybe_trun_chunks]
             return query_result
-        return section
+        return [c["content"] for c in maybe_trun_chunks]
 
     # Process conversation history
     history_context = ""
@@ -1606,7 +1606,7 @@ async def naive_query(
             cache_type="query",
         ),
     )
-    
+
     if query_result:
         query_result["response"] = response
         return query_result
