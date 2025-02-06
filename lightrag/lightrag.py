@@ -330,6 +330,82 @@ class LightRAG:
             # set client
             storage.db = db_client
 
+    def list_doc_names(self) -> list[str]:
+        """List all unique document names in the database"""
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.alist_doc_names())
+
+    async def alist_doc_names(self) -> list[str]:
+        """List all unique document names in the database asynchronously"""
+        try:
+            # Get all docs from storage
+            docs = await self.full_docs.get_all_docs()
+            
+            # Extract unique non-None doc names from the list of documents
+            doc_names = {
+                doc["doc_name"] 
+                for doc in docs 
+                if doc and doc.get("doc_name") is not None
+            }
+            return sorted(list(doc_names))
+        except Exception as e:
+            logger.error(f"Error listing document names: {e}")
+            return []
+        
+    def delete_by_doc_name(self, doc_name: str) -> bool:
+        """Delete document and all related data by document name
+        
+        Args:
+            doc_name: Name of document to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.adelete_by_doc_name(doc_name))
+
+    async def adelete_by_doc_name(self, doc_name: str) -> bool:
+        """Delete document and all related data by document name asynchronously
+        
+        Args:
+            doc_name: Name of document to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Get all docs from storage
+            docs = await self.full_docs.get_all_docs()
+            
+            # Find all doc_ids matching the doc_name
+            doc_ids = [
+                doc["id"]
+                for doc in docs 
+                if doc and doc.get("doc_name") == doc_name
+            ]
+
+            if not doc_ids:
+                logger.warning(f"No documents found with name: {doc_name}")
+                return False
+
+            # Delete documents sequentially
+            success = True
+            for doc_id in doc_ids:
+                try:
+                    result = await self.adelete_by_doc_id(doc_id)
+                    if not result:
+                        success = False
+                        logger.error(f"Failed to delete document {doc_id}")
+                except Exception as e:
+                    success = False
+                    logger.error(f"Error deleting document {doc_id}: {e}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error deleting document {doc_name}: {e}")
+            return False
+
     def insert(
         self, string_or_strings, split_by_character=None, split_by_character_only=False, doc_names=None
     ):
@@ -394,10 +470,8 @@ class LightRAG:
         batch_size = self.addon_params.get("insert_batch_size", 10)
         for i in range(0, len(new_docs), batch_size):
             batch_docs = dict(list(new_docs.items())[i : i + batch_size])
-
-            for doc_id, doc in tqdm_async(
-                batch_docs.items(), desc=f"Processing batch {i // batch_size + 1}"
-            ):
+            
+            async def process_doc(doc_id, doc):
                 try:
                     # Update status to processing
                     doc_status = {
@@ -478,10 +552,16 @@ class LightRAG:
                     import traceback
                     error_msg = f"Failed to process document {doc_id}: {str(e)}\n{traceback.format_exc()}"
                     logger.error(error_msg)
-                    continue
-                else:
-                    # Only update index when processing succeeds
-                    await self._insert_done()
+                    return False
+                return True
+
+            # Process batch concurrently
+            tasks = [process_doc(doc_id, doc) for doc_id, doc in batch_docs.items()]
+            results = await asyncio.gather(*tasks)
+            
+            # Update index for successful documents
+            if any(results):
+                await self._insert_done()
 
     def insert_custom_chunks(self, full_text: str, text_chunks: list[str]):
         loop = always_get_an_event_loop()
@@ -1154,7 +1234,7 @@ class LightRAG:
                 # Check entities
                 entities = [
                     dp
-                    for dp in self.entities_vdb.client_storage["data"]
+                    for dp in (await self.entities_vdb.client_storage)["data"]
                     if dp.get("source_id") == chunk_id
                 ]
                 logger.debug(f"Chunk {chunk_id} has {len(entities)} related entities")
@@ -1162,7 +1242,7 @@ class LightRAG:
                 # Check relationships
                 relations = [
                     dp
-                    for dp in self.relationships_vdb.client_storage["data"]
+                    for dp in (await self.relationships_vdb.client_storage)["data"]
                     if dp.get("source_id") == chunk_id
                 ]
                 logger.debug(f"Chunk {chunk_id} has {len(relations)} related relations")

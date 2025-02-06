@@ -1501,6 +1501,9 @@ async def naive_query(
     global_config: dict,
     hashing_kv: BaseKVStorage = None,
 ):
+    
+    query_result = {}
+
     # Handle cache
     use_model_func = global_config["llm_model_func"]
     args_hash = compute_args_hash(query_param.mode, query, cache_type="query")

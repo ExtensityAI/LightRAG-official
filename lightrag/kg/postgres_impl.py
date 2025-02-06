@@ -249,6 +249,30 @@ class PGKVStorage(BaseKVStorage):
             return res
         else:
             return None
+        
+    async def get_all_docs(self) -> List[Dict[str, Any]]:
+        """Get all documents from storage.
+
+        Returns:
+            List of document dictionaries containing id and doc_name
+        """
+        try:
+            if self.namespace == "full_docs":
+                sql = """
+                    SELECT id, doc_name
+                    FROM LIGHTRAG_DOC_FULL
+                    WHERE workspace = $1
+                    ORDER BY id
+                """
+                
+                results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
+                return results if results else []
+            
+            return []  # Return empty list for other namespaces
+            
+        except Exception as e:
+            logger.error(f"Error getting all documents from {self.namespace}: {e}")
+            raise
 
     async def all_keys(self) -> list[dict]:
         if "llm_response_cache" == self.namespace:
@@ -259,6 +283,34 @@ class PGKVStorage(BaseKVStorage):
             logger.error(
                 f"all_keys is only implemented for llm_response_cache, not for {self.namespace}"
             )
+
+    async def filter(self, filter_func):
+        """Filter key-value pairs based on a filter function
+
+        Args:
+            filter_func: The filter function, which takes a value as an argument and returns a boolean value
+
+        Returns:
+            Dict: Key-value pairs that meet the condition
+        """
+        if self.namespace == "text_chunks":
+            sql = """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
+                    c.chunk_order_index, c.full_doc_id, f.doc_name
+                    FROM LIGHTRAG_DOC_CHUNKS c 
+                    JOIN lightrag_doc_full f ON f.id = c.full_doc_id
+                    WHERE c.workspace=$1 AND f.workspace=$1"""
+            params = {"workspace": self.db.workspace}
+            results = await self.db.query(sql, params, multirows=True)
+            
+            filtered_results = {}
+            if results:
+                for row in results:
+                    if filter_func(row):
+                        filtered_results[row['id']] = row
+            return filtered_results
+        else:
+            logger.warning(f"Filter operation not implemented for namespace {self.namespace}")
+            return {}
 
     async def filter_keys(self, keys: List[str]) -> Set[str]:
         """Filter out duplicated content"""
@@ -315,6 +367,40 @@ class PGKVStorage(BaseKVStorage):
         if self.namespace in ["full_docs", "text_chunks"]:
             logger.info("full doc and chunk data had been saved into postgresql db!")
 
+    async def delete(self, ids: list[str]):
+        """Delete records with specified IDs
+
+        Args:
+            ids: List of IDs to be deleted
+        """
+        try:
+            if not ids:
+                return
+
+            # Map namespace to table name
+            table_name = {
+                "full_docs": "LIGHTRAG_DOC_FULL",
+                "text_chunks": "LIGHTRAG_DOC_CHUNKS",
+                "llm_response_cache": "LIGHTRAG_LLM_CACHE",
+                "doc_status": "LIGHTRAG_DOC_STATUS"
+            }.get(self.namespace)
+
+            if not table_name:
+                raise ValueError(f"Unknown namespace: {self.namespace}")
+
+            # Create parameterized query
+            placeholders = ','.join([f"'{id}'" for id in ids])
+            sql = f"""
+                DELETE FROM {table_name}
+                WHERE workspace = $1 AND id IN ({placeholders})
+            """
+            
+            await self.db.execute(sql, {"workspace": self.db.workspace})
+            logger.info(f"Successfully deleted {len(ids)} records from {self.namespace}")
+        except Exception as e:
+            logger.error(f"Error while deleting records from {self.namespace}: {e}")
+            raise
+
 
 @dataclass
 class PGVectorStorage(BaseVectorStorage):
@@ -328,6 +414,22 @@ class PGVectorStorage(BaseVectorStorage):
         self.cosine_better_than_threshold = config.get(
             "cosine_better_than_threshold", self.cosine_better_than_threshold
         )
+
+    @property
+    async def client_storage(self):
+        """Return data structure needed for debugging and entity/relationship checks"""
+        if self.namespace == "entities":
+            sql = """SELECT id, entity_name, content FROM LIGHTRAG_VDB_ENTITY 
+                    WHERE workspace=$1"""
+        elif self.namespace == "relationships":
+            sql = """SELECT id, source_id, target_id, content FROM LIGHTRAG_VDB_RELATION 
+                    WHERE workspace=$1"""
+        else:
+            return {"data": []}
+
+        params = {"workspace": self.db.workspace}
+        result = await self.db.query(sql, params, multirows=True)
+        return {"data": result if result else []}
 
     def _upsert_chunks(self, item: dict):
         try:
@@ -434,6 +536,40 @@ class PGVectorStorage(BaseVectorStorage):
         }
         results = await self.db.query(sql, params=params, multirows=True)
         return results
+    
+    async def delete(self, ids: list[str]):
+        """Delete vectors with specified IDs
+
+        Args:
+            ids: List of vector IDs to be deleted
+        """
+        try:
+            if not ids:
+                return
+
+            # Different tables for different namespaces
+            table_name = {
+                "chunks": "LIGHTRAG_DOC_CHUNKS",
+                "entities": "LIGHTRAG_VDB_ENTITY",
+                "relationships": "LIGHTRAG_VDB_RELATION"
+            }.get(self.namespace)
+
+            if not table_name:
+                raise ValueError(f"Unknown namespace: {self.namespace}")
+
+            # Create SQL with parameterized query
+            placeholders = ','.join([f"'{id}'" for id in ids])
+            sql = f"""
+                DELETE FROM {table_name}
+                WHERE workspace = $1 AND id IN ({placeholders})
+            """
+            
+            await self.db.execute(sql, {"workspace": self.db.workspace})
+            
+            logger.info(f"Successfully deleted {len(ids)} vectors from {self.namespace}")
+        except Exception as e:
+            logger.error(f"Error while deleting vectors from {self.namespace}: {e}")
+            raise
 
 
 @dataclass
@@ -458,6 +594,20 @@ class PGDocStatusStorage(DocStatusStorage):
         else:
             existed = set([element["id"] for element in result])
             return set(data) - existed
+        
+    async def get(self, doc_id: str) -> Union[DocProcessingStatus, None]:
+        """Get document status by ID"""
+        result = await self.get_by_id(doc_id)
+        if result is None:
+            return None
+        return DocProcessingStatus(
+            content_length=result["content_length"],
+            content_summary=result["content_summary"],
+            status=result["status"],
+            chunks_count=result["chunks_count"],
+            created_at=result["created_at"],
+            updated_at=result["updated_at"]
+        )
 
     async def get_by_id(self, id: str) -> Union[T, None]:
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and id=$2"
@@ -508,6 +658,27 @@ class PGDocStatusStorage(DocStatusStorage):
             )
             for element in result
         }
+    
+    async def get_all_docs(self) -> List[Dict[str, Any]]:
+        """Get all document statuses from storage.
+
+        Returns:
+            List of document status dictionaries
+        """
+        try:
+            sql = """
+                SELECT id, doc_name, status, created_at, updated_at
+                FROM LIGHTRAG_DOC_STATUS
+                WHERE workspace = $1
+                ORDER BY created_at DESC
+            """
+            
+            results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
+            return results if results else []
+            
+        except Exception as e:
+            logger.error(f"Error getting all documents from doc_status: {e}")
+            raise
 
     async def get_failed_docs(self) -> Dict[str, DocProcessingStatus]:
         """Get all failed documents"""
@@ -549,6 +720,29 @@ class PGDocStatusStorage(DocStatusStorage):
                 },
             )
         return data
+    
+    async def delete(self, ids: list[str]):
+        """Delete document status records with specified IDs
+
+        Args:
+            ids: List of document IDs to be deleted
+        """
+        try:
+            if not ids:
+                return
+
+            # Create parameterized query
+            placeholders = ','.join([f"'{id}'" for id in ids])
+            sql = f"""
+                DELETE FROM LIGHTRAG_DOC_STATUS
+                WHERE workspace = $1 AND id IN ({placeholders})
+            """
+            
+            await self.db.execute(sql, {"workspace": self.db.workspace})
+            logger.info(f"Successfully deleted {len(ids)} records from doc_status")
+        except Exception as e:
+            logger.error(f"Error while deleting records from doc_status: {e}")
+            raise
 
 
 class PGGraphQueryException(Exception):
