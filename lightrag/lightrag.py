@@ -1270,18 +1270,21 @@ class LightRAG:
         """
         return await self.doc_status.get_status_counts()
 
-    async def adelete_by_doc_id(self, doc_id: str):
+    async def adelete_by_doc_id(self, doc_id: str) -> bool:
         """Delete a document and all its related data
 
         Args:
             doc_id: Document ID to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
         """
         try:
             # 1. Get the document status and related data
             doc_status = await self.doc_status.get(doc_id)
             if not doc_status:
                 logger.warning(f"Document {doc_id} not found")
-                return
+                return False
 
             logger.debug(f"Starting deletion for document {doc_id}")
 
@@ -1419,9 +1422,11 @@ class LightRAG:
 
             # Add verification step
             async def verify_deletion():
+                verification_passed = True
                 # Verify if the document has been deleted
                 if await self.full_docs.get_by_id(doc_id):
                     logger.error(f"Document {doc_id} still exists in full_docs")
+                    verification_passed = False
 
                 # Verify if chunks have been deleted
                 remaining_chunks = await self.text_chunks.filter(
@@ -1429,6 +1434,7 @@ class LightRAG:
                 )
                 if remaining_chunks:
                     logger.error(f"Found {len(remaining_chunks)} remaining chunks")
+                    verification_passed = False
 
                 # Verify entities and relationships
                 for chunk_id in chunk_ids:
@@ -1443,6 +1449,7 @@ class LightRAG:
                         logger.error(
                             f"Found {len(entities_with_chunk)} entities still referencing chunk {chunk_id}"
                         )
+                        verification_passed = False
 
                     # Check relationships
                     relations_with_chunk = [
@@ -1455,11 +1462,16 @@ class LightRAG:
                         logger.error(
                             f"Found {len(relations_with_chunk)} relations still referencing chunk {chunk_id}"
                         )
+                        verification_passed = False
+            
+                return verification_passed
 
-            await verify_deletion()
+            verification_result = await verify_deletion()
+            return verification_result
 
         except Exception as e:
             logger.error(f"Error while deleting document {doc_id}: {e}")
+            return False
 
     def delete_by_doc_id(self, doc_id: str):
         """Synchronous version of adelete"""
