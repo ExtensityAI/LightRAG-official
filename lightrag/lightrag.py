@@ -396,55 +396,60 @@ class LightRAG:
             logger.error(f"Error listing document names: {e}")
             return []
 
-    def delete_by_doc_name(self, doc_name: str) -> bool:
+    def delete_by_doc_name(self, doc_name: str, workspace=None) -> bool:
         """Delete document and all related data by document name
         
         Args:
             doc_name: Name of document to delete
+            workspace: Optional workspace to delete from
             
         Returns:
             bool: True if deletion was successful, False otherwise
         """
         loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.adelete_by_doc_name(doc_name))
+        return loop.run_until_complete(self.adelete_by_doc_name(doc_name, workspace=workspace))
 
-    async def adelete_by_doc_name(self, doc_name: str) -> bool:
+    async def adelete_by_doc_name(self, doc_name: str, workspace=None) -> bool:
         """Delete document and all related data by document name asynchronously
         
         Args:
             doc_name: Name of document to delete
+            workspace: Optional workspace to delete from
             
         Returns:
             bool: True if deletion was successful, False otherwise
         """
         try:
-            # Get all docs from storage
-            docs = await self.full_docs.get_all_docs()
+            workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
             
-            # Find all doc_ids matching the doc_name
-            doc_ids = [
-                doc["id"]
-                for doc in docs 
-                if doc and doc.get("doc_name") == doc_name
-            ]
+            async with workspace_mgr.temporary_workspace():
+                # Get all docs from storage
+                docs = await self.full_docs.get_all_docs()
+                
+                # Find all doc_ids matching the doc_name
+                doc_ids = [
+                    doc["id"]
+                    for doc in docs 
+                    if doc and doc.get("doc_name") == doc_name
+                ]
 
-            if not doc_ids:
-                logger.warning(f"No documents found with name: {doc_name}")
-                return False
+                if not doc_ids:
+                    logger.warning(f"No documents found with name: {doc_name}")
+                    return False
 
-            # Delete documents sequentially
-            success = True
-            for doc_id in doc_ids:
-                try:
-                    result = await self.adelete_by_doc_id(doc_id)
-                    if not result:
+                # Delete documents sequentially
+                success = True
+                for doc_id in doc_ids:
+                    try:
+                        result = await self.adelete_by_doc_id(doc_id)
+                        if not result:
+                            success = False
+                            logger.error(f"Failed to delete document {doc_id}")
+                    except Exception as e:
                         success = False
-                        logger.error(f"Failed to delete document {doc_id}")
-                except Exception as e:
-                    success = False
-                    logger.error(f"Error deleting document {doc_id}: {e}")
+                        logger.error(f"Error deleting document {doc_id}: {e}")
 
-            return success
+                return success
 
         except Exception as e:
             logger.error(f"Error deleting document {doc_name}: {e}")
