@@ -13,7 +13,8 @@ from .base import (BaseGraphStorage, BaseKVStorage, BaseVectorStorage,
 from .kg.no_op_graph_impl import NoOpGraphStorage
 from .operate import (  # local_query,global_query,hybrid_query,
     chunking_by_token_size, extract_entities, extract_keywords_only, kg_query,
-    kg_query_with_keywords, mix_kg_vector_query, naive_query)
+    kg_query_with_keywords, mix_kg_vector_query, naive_query,
+)
 from .prompt import GRAPH_FIELD_SEP
 from .utils import (EmbeddingFunc, compute_mdhash_id, convert_response_to_json,
                     limit_async_func_call, logger, set_logger, statistic_data)
@@ -1281,7 +1282,7 @@ class LightRAG:
         """
         try:
             # 1. Get the document status and related data
-            doc_status = await self.doc_status.get(doc_id)
+            doc_status = await self.doc_status.get_by_id(doc_id)
             if not doc_status:
                 logger.warning(f"Document {doc_id} not found")
                 return False
@@ -1296,19 +1297,20 @@ class LightRAG:
             logger.debug(f"Found {len(chunk_ids)} chunks to delete")
 
             # 3. Before deleting, check the related entities and relationships for these chunks
+            entities_data = await self.entities_vdb.get_all_docs()
+            relations_data = await self.relationships_vdb.get_all_docs()
+            
             for chunk_id in chunk_ids:
                 # Check entities
                 entities = [
-                    dp
-                    for dp in self.entities_vdb.client_storage["data"]
+                    dp for dp in entities_data
                     if dp.get("source_id") == chunk_id
                 ]
                 logger.debug(f"Chunk {chunk_id} has {len(entities)} related entities")
 
                 # Check relationships
                 relations = [
-                    dp
-                    for dp in self.relationships_vdb.client_storage["data"]
+                    dp for dp in relations_data
                     if dp.get("source_id") == chunk_id
                 ]
                 logger.debug(f"Chunk {chunk_id} has {len(relations)} related relations")
@@ -1441,7 +1443,7 @@ class LightRAG:
                     # Check entities
                     entities_with_chunk = [
                         dp
-                        for dp in self.entities_vdb.client_storage["data"]
+                        for dp in (await self.entities_vdb.get_all_docs())
                         if chunk_id
                         in (dp.get("source_id") or "").split(GRAPH_FIELD_SEP)
                     ]
@@ -1454,7 +1456,7 @@ class LightRAG:
                     # Check relationships
                     relations_with_chunk = [
                         dp
-                        for dp in self.relationships_vdb.client_storage["data"]
+                        for dp in (await self.relationships_vdb.get_all_docs())
                         if chunk_id
                         in (dp.get("source_id") or "").split(GRAPH_FIELD_SEP)
                     ]

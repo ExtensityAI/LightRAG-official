@@ -571,6 +571,38 @@ class PGVectorStorage(BaseVectorStorage):
             logger.error(f"Error while deleting vectors from {self.namespace}: {e}")
             raise
 
+    async def get_all_docs(self) -> List[Dict]:
+        """Get all documents from the vector storage.
+        
+        Returns:
+            List[Dict]: List of all documents with their metadata
+        """
+        try:
+            # SQL to get all documents based on namespace
+            if self.namespace == "chunks":
+                sql = """SELECT id, content_vector, full_doc_id as source_id 
+                        FROM LIGHTRAG_DOC_CHUNKS 
+                        WHERE workspace=$1"""
+            elif self.namespace == "entities":
+                sql = """SELECT id, content_vector, entity_name as source_id 
+                        FROM LIGHTRAG_VDB_ENTITY 
+                        WHERE workspace=$1"""
+            elif self.namespace == "relationships":
+                sql = """SELECT id, content_vector, source_id, target_id 
+                        FROM LIGHTRAG_VDB_RELATION 
+                        WHERE workspace=$1"""
+            else:
+                logger.warning(f"Unsupported namespace for get_all_docs: {self.namespace}")
+                return []
+
+            params = {"workspace": self.db.workspace}
+            results = await self.db.query(sql, params, multirows=True)
+            return results if results else []
+            
+        except Exception as e:
+            logger.error(f"Error getting all docs from {self.namespace}: {e}")
+            return []
+
 
 @dataclass
 class PGDocStatusStorage(DocStatusStorage):
