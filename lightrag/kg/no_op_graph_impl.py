@@ -5,6 +5,22 @@ class NoOpGraphStorage(BaseGraphStorage):
         self.namespace = namespace
         self.embedding_func = embedding_func
         self.global_config = global_config
+        
+        # Create a minimal graph-like interface
+        class NoOpGraph:
+            def nodes(self, data=True):
+                return []
+            
+            def edges(self, data=True):
+                return []
+            
+            def has_node(self, node):
+                return False
+            
+            def has_edge(self, source, target):
+                return False
+        
+        self._graph = NoOpGraph()
 
     async def upsert_node(self, node_key, node_data={}):
         pass
@@ -26,3 +42,13 @@ class NoOpGraphStorage(BaseGraphStorage):
         pass
     async def has_node(self, node_id):
         return False
+    
+    def nodes(self, data=True):
+        return []
+    
+    def edges(self, data=True):
+        return []
+
+    @property
+    async def client_storage(self):
+        return {"data": []}

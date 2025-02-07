@@ -1208,17 +1208,20 @@ class LightRAG:
         return await self.doc_status.get_status_counts()
 
     async def adelete_by_doc_id(self, doc_id: str):
-        """Delete a document and all its related data
-
+        """Delete document and all related data by document ID
+        
         Args:
             doc_id: Document ID to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
         """
         try:
             # 1. Get the document status and related data
             doc_status = await self.doc_status.get(doc_id)
             if not doc_status:
                 logger.warning(f"Document {doc_id} not found")
-                return
+                return False
 
             logger.debug(f"Starting deletion for document {doc_id}")
 
@@ -1394,9 +1397,11 @@ class LightRAG:
                         )
 
             await verify_deletion()
+            return True  # Add explicit return value for success
 
         except Exception as e:
             logger.error(f"Error while deleting document {doc_id}: {e}")
+            return False  # Add explicit return value for failure
 
     def delete_by_doc_id(self, doc_id: str):
         """Synchronous version of adelete"""
