@@ -453,14 +453,14 @@ class LightRAG:
         doc_names=None, workspace=None,
         split_by_character=None, split_by_character_only=False,
     ):
-        """Insert documents with checkpoint support
+        """Insert documents with checkpoint support and parallel batch processing
 
         Args:
             string_or_strings: Single document string or list of document strings
-            split_by_character: if split_by_character is not None, split the string by character, if chunk longer than
-            chunk_size, split the sub chunk by token size.
-            split_by_character_only: if split_by_character_only is True, split the string by character only, when
-            split_by_character is None, this parameter is ignored.
+            doc_names: Optional list of document names corresponding to the strings
+            workspace: Optional workspace name
+            split_by_character: if split_by_character is not None, split the string by character
+            split_by_character_only: if True, split only by character (ignored if split_by_character is None)
         """
         workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
 
@@ -489,7 +489,6 @@ class LightRAG:
             }
 
             # 3. Filter out already processed documents
-            # _add_doc_keys = await self.doc_status.filter_keys(list(new_docs.keys()))
             _add_doc_keys = {
                 doc_id
                 for doc_id in new_docs.keys()
@@ -508,10 +507,8 @@ class LightRAG:
             batch_size = self.addon_params.get("insert_batch_size", 10)
             for i in range(0, len(new_docs), batch_size):
                 batch_docs = dict(list(new_docs.items())[i : i + batch_size])
-
-                for doc_id, doc in tqdm_async(
-                    batch_docs.items(), desc=f"Processing batch {i // batch_size + 1}"
-                ):
+                
+                async def process_doc(doc_id, doc):
                     try:
                         # Update status to processing
                         doc_status = {
@@ -592,10 +589,22 @@ class LightRAG:
                         import traceback
                         error_msg = f"Failed to process document {doc_id}: {str(e)}\n{traceback.format_exc()}"
                         logger.error(error_msg)
-                        continue
-                    else:
-                        # Only update index when processing succeeds
-                        await self._insert_done()
+                        return False
+                    return True
+
+                # Process batch concurrently with progress bar
+                with tqdm_async(
+                    total=len(batch_docs),
+                    desc=f"Processing batch {i // batch_size + 1}",
+                    unit="doc"
+                ) as pbar:
+                    tasks = [process_doc(doc_id, doc) for doc_id, doc in batch_docs.items()]
+                    results = await asyncio.gather(*tasks)
+                    pbar.update(len(results))
+                
+                # Update index for successful documents
+                if any(results):
+                    await self._insert_done()
 
     def insert_custom_chunks(self, full_text: str, text_chunks: list[str]):
         loop = always_get_an_event_loop()
