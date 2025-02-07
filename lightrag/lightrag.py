@@ -357,28 +357,45 @@ class LightRAG:
             self.chunk_entity_relation_graph,
         ]
     
-    def list_doc_names(self) -> list[str]:
-        """List all unique document names in the database"""
-        loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.alist_doc_names())
-
-    async def alist_doc_names(self) -> list[str]:
-        """List all unique document names in the database asynchronously"""
-        try:
-            # Get all docs from storage
-            docs = await self.full_docs.get_all_docs()
+    def list_doc_names(self, workspace=None):
+        """List all unique document names in the database
+        
+        Args:
+            workspace: Optional workspace to filter documents
             
-            # Extract unique non-None doc names from the list of documents
-            doc_names = {
-                doc["doc_name"] 
-                for doc in docs 
-                if doc and doc.get("doc_name") is not None
-            }
-            return sorted(list(doc_names))
+        Returns:
+            list[str]: List of document names
+        """
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.alist_doc_names(workspace=workspace))
+
+    async def alist_doc_names(self, workspace=None):
+        """List all unique document names in the database asynchronously
+        
+        Args:
+            workspace: Optional workspace to filter documents
+            
+        Returns:
+            list[str]: List of document names
+        """
+        try:
+            workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
+            
+            async with workspace_mgr.temporary_workspace():
+                # Get all docs from storage
+                docs = await self.full_docs.get_all_docs()
+                
+                # Extract unique non-None doc names from the list of documents
+                doc_names = {
+                    doc["doc_name"] 
+                    for doc in docs 
+                    if doc and doc.get("doc_name") is not None
+                }
+                return sorted(list(doc_names))
         except Exception as e:
             logger.error(f"Error listing document names: {e}")
             return []
-        
+
     def delete_by_doc_name(self, doc_name: str) -> bool:
         """Delete document and all related data by document name
         
