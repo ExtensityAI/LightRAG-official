@@ -152,7 +152,7 @@ PROMPTS[
 """
 
 PROMPTS["fail_response"] = (
-    "Sorry, I'm not able to provide an answer to that question.[no-context]"
+    "Sorry, I'm not able to provide an answer to that question."
 )
 
 PROMPTS["rag_response"] = """---Role---
