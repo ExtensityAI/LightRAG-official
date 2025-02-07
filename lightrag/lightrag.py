@@ -355,6 +355,82 @@ class LightRAG:
             self.entities_vdb,
             self.chunk_entity_relation_graph,
         ]
+    
+    def list_doc_names(self) -> list[str]:
+        """List all unique document names in the database"""
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.alist_doc_names())
+
+    async def alist_doc_names(self) -> list[str]:
+        """List all unique document names in the database asynchronously"""
+        try:
+            # Get all docs from storage
+            docs = await self.full_docs.get_all_docs()
+            
+            # Extract unique non-None doc names from the list of documents
+            doc_names = {
+                doc["doc_name"] 
+                for doc in docs 
+                if doc and doc.get("doc_name") is not None
+            }
+            return sorted(list(doc_names))
+        except Exception as e:
+            logger.error(f"Error listing document names: {e}")
+            return []
+        
+    def delete_by_doc_name(self, doc_name: str) -> bool:
+        """Delete document and all related data by document name
+        
+        Args:
+            doc_name: Name of document to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.adelete_by_doc_name(doc_name))
+
+    async def adelete_by_doc_name(self, doc_name: str) -> bool:
+        """Delete document and all related data by document name asynchronously
+        
+        Args:
+            doc_name: Name of document to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Get all docs from storage
+            docs = await self.full_docs.get_all_docs()
+            
+            # Find all doc_ids matching the doc_name
+            doc_ids = [
+                doc["id"]
+                for doc in docs 
+                if doc and doc.get("doc_name") == doc_name
+            ]
+
+            if not doc_ids:
+                logger.warning(f"No documents found with name: {doc_name}")
+                return False
+
+            # Delete documents sequentially
+            success = True
+            for doc_id in doc_ids:
+                try:
+                    result = await self.adelete_by_doc_id(doc_id)
+                    if not result:
+                        success = False
+                        logger.error(f"Failed to delete document {doc_id}")
+                except Exception as e:
+                    success = False
+                    logger.error(f"Error deleting document {doc_id}: {e}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error deleting document {doc_name}: {e}")
+            return False
 
     def insert(
         self,
