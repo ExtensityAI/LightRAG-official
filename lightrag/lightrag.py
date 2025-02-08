@@ -98,30 +98,35 @@ class WorkspaceManager:
     storages: List
     new_workspace: Optional[str]
     _original_workspaces: List[tuple] = None
+    # Snchronize access
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @asynccontextmanager
     async def temporary_workspace(self):
-        """Context manager for temporarily changing workspace"""
-        if not self.new_workspace:
-            yield
-            return
+        """Context manager for temporarily changing workspace while preventing concurrent modifications"""
+        # Acquire the lock so that concurrent access is blocked
+        async with self._lock:
+            if not self.new_workspace:
+                # If no new workspace is provided, just yield immediately
+                yield
+                return
 
-        try:
-            # Store original workspaces and switch to new one
-            self._original_workspaces = []
-            for storage in self.storages:
-                if hasattr(storage, 'db'):
-                    # Store (storage, original_workspace) tuple
-                    self._original_workspaces.append((storage, storage.db.workspace))
-                    storage.db.workspace = self.new_workspace
-            yield
-
-        finally:
-            # Restore original workspaces
-            if self._original_workspaces:
-                for storage, original_workspace in self._original_workspaces:
+            try:
+                # Store original workspaces and switch to the new one
+                self._original_workspaces = []
+                for storage in self.storages:
                     if hasattr(storage, 'db'):
-                        storage.db.workspace = original_workspace
+                        # Save the original setting along with the storage
+                        self._original_workspaces.append((storage, storage.db.workspace))
+                        storage.db.workspace = self.new_workspace
+                # Yield control to the caller while keeping the lock held
+                yield
+            finally:
+                # Restore original workspaces regardless of success or exception
+                if self._original_workspaces:
+                    for storage, original_workspace in self._original_workspaces:
+                        if hasattr(storage, 'db'):
+                            storage.db.workspace = original_workspace
 
 
 @dataclass
@@ -356,13 +361,13 @@ class LightRAG:
             self.entities_vdb,
             self.chunk_entity_relation_graph,
         ]
-    
+
     def list_doc_names(self, workspace=None):
         """List all unique document names in the database
-        
+
         Args:
             workspace: Optional workspace to filter documents
-            
+
         Returns:
             list[str]: List of document names
         """
@@ -371,24 +376,24 @@ class LightRAG:
 
     async def alist_doc_names(self, workspace=None):
         """List all unique document names in the database asynchronously
-        
+
         Args:
             workspace: Optional workspace to filter documents
-            
+
         Returns:
             list[str]: List of document names
         """
         try:
             workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
-            
+
             async with workspace_mgr.temporary_workspace():
                 # Get all docs from storage
                 docs = await self.full_docs.get_all_docs()
-                
+
                 # Extract unique non-None doc names from the list of documents
                 doc_names = {
-                    doc["doc_name"] 
-                    for doc in docs 
+                    doc["doc_name"]
+                    for doc in docs
                     if doc and doc.get("doc_name") is not None
                 }
                 return sorted(list(doc_names))
@@ -398,11 +403,11 @@ class LightRAG:
 
     def delete_by_doc_name(self, doc_name: str, workspace=None) -> bool:
         """Delete document and all related data by document name
-        
+
         Args:
             doc_name: Name of document to delete
             workspace: Optional workspace to delete from
-            
+
         Returns:
             bool: True if deletion was successful, False otherwise
         """
@@ -411,25 +416,25 @@ class LightRAG:
 
     async def adelete_by_doc_name(self, doc_name: str, workspace=None) -> bool:
         """Delete document and all related data by document name asynchronously
-        
+
         Args:
             doc_name: Name of document to delete
             workspace: Optional workspace to delete from
-            
+
         Returns:
             bool: True if deletion was successful, False otherwise
         """
         try:
             workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
-            
+
             async with workspace_mgr.temporary_workspace():
                 # Get all docs from storage
                 docs = await self.full_docs.get_all_docs()
-                
+
                 # Find all doc_ids matching the doc_name
                 doc_ids = [
                     doc["id"]
-                    for doc in docs 
+                    for doc in docs
                     if doc and doc.get("doc_name") == doc_name
                 ]
 
@@ -530,7 +535,7 @@ class LightRAG:
             batch_size = self.addon_params.get("insert_batch_size", 10)
             for i in range(0, len(new_docs), batch_size):
                 batch_docs = dict(list(new_docs.items())[i : i + batch_size])
-                
+
                 async def process_doc(doc_id, doc):
                     try:
                         # Update status to processing
@@ -624,7 +629,7 @@ class LightRAG:
                     tasks = [process_doc(doc_id, doc) for doc_id, doc in batch_docs.items()]
                     results = await asyncio.gather(*tasks)
                     pbar.update(len(results))
-                
+
                 # Update index for successful documents
                 if any(results):
                     await self._insert_done()
@@ -1298,7 +1303,7 @@ class LightRAG:
 
         Args:
             doc_id: Document ID to delete
-            
+
         Returns:
             bool: True if deletion was successful, False otherwise
         """
@@ -1321,7 +1326,7 @@ class LightRAG:
             # 3. Before deleting, check the related entities and relationships for these chunks
             entities_data = await self.entities_vdb.get_all_docs()
             relations_data = await self.relationships_vdb.get_all_docs()
-            
+
             for chunk_id in chunk_ids:
                 # Check entities
                 entities = [
@@ -1487,7 +1492,7 @@ class LightRAG:
                             f"Found {len(relations_with_chunk)} relations still referencing chunk {chunk_id}"
                         )
                         verification_passed = False
-            
+
                 return verification_passed
 
             verification_result = await verify_deletion()
