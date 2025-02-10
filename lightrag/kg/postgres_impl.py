@@ -274,6 +274,34 @@ class PGKVStorage(BaseKVStorage):
             logger.error(f"Error getting all documents from {self.namespace}: {e}")
             raise
 
+    async def get_all(self) -> dict:
+        """Get all entries from the cache
+        
+        Returns:
+            dict: All cache entries organized by mode and id
+        """
+        if self.namespace == "llm_response_cache":
+            sql = f"""
+                SELECT id, original_prompt, return_value as "return", mode
+                FROM {NAMESPACE_TABLE_MAP[self.namespace]} 
+                WHERE workspace = $1
+            """
+            results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
+            
+            # Organize results by mode
+            cache_data = {}
+            if results:
+                for row in results:
+                    mode = row.pop("mode")  # Remove mode from row data
+                    if mode not in cache_data:
+                        cache_data[mode] = {}
+                    cache_data[mode][row["id"]] = row
+                    
+            return cache_data
+        else:
+            logger.warning(f"get_all() not implemented for namespace {self.namespace}")
+            return {}
+
     async def all_keys(self) -> list[dict]:
         if "llm_response_cache" == self.namespace:
             sql = "select workspace,mode,id from lightrag_llm_cache"

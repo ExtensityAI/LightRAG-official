@@ -1508,7 +1508,7 @@ async def naive_query(
     use_model_func = global_config["llm_model_func"]
     args_hash = compute_args_hash(query_param.mode, query, cache_type="query")
     cached_response, quantized, min_val, max_val = await handle_cache(
-        hashing_kv, args_hash, query, "default", cache_type="query"
+        hashing_kv, args_hash, query, query_param.mode, cache_type="query"
     )
     if cached_response is not None:
         return cached_response
@@ -1595,13 +1595,18 @@ async def naive_query(
             .strip()
         )
 
+    # Create cache prefix
+    workspace = hashing_kv.db.workspace if hasattr(hashing_kv, 'db') else "default"
+    doc_names_prefix = "|".join([c.get("doc_name", "unknown") for c in maybe_trun_chunks])
+    cache_prompt = f"{doc_names_prefix}::{workspace}::{query}"
+
     # Save to cache
     await save_to_cache(
         hashing_kv,
         CacheData(
             args_hash=args_hash,
             content=response,
-            prompt=query,
+            prompt=cache_prompt,
             quantized=quantized,
             min_val=min_val,
             max_val=max_val,
