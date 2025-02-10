@@ -922,7 +922,7 @@ def create_app(args):
             enable_llm_cache_for_entity_extract=False,  # set to True for debuging to reduce llm fee
             embedding_cache_config={
                 "enabled": True,
-                "similarity_threshold": 0.95,
+                "similarity_threshold": 0.85,
                 "use_llm_check": False,
             },
         )
@@ -951,7 +951,7 @@ def create_app(args):
             enable_llm_cache_for_entity_extract=False,  # set to True for debuging to reduce llm fee
             embedding_cache_config={
                 "enabled": True,
-                "similarity_threshold": 0.95,
+                "similarity_threshold": 0.85,
                 "use_llm_check": False,
             },
         )

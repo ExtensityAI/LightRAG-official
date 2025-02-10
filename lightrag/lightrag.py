@@ -138,7 +138,7 @@ class LightRAG:
     embedding_cache_config: dict = field(
         default_factory=lambda: {
             "enabled": False,
-            "similarity_threshold": 0.95,
+            "similarity_threshold": 0.85,
             "use_llm_check": False,
         }
     )

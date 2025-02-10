@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import tiktoken
+import Levenshtein
 
 from lightrag.prompt import PROMPTS
 
@@ -360,19 +361,26 @@ def process_combine_contexts(hl, ll):
 
 async def get_best_cached_response(
     hashing_kv,
-    current_embedding,
-    similarity_threshold=0.95,
+    current_prompt,
+    similarity_threshold=0.75,
     mode="default",
     use_llm_check=False,
     llm_func=None,
     original_prompt=None,
-    cache_type=None,
 ) -> Union[str, None]:
     logger.debug(
-        f"get_best_cached_response:  mode={mode} cache_type={cache_type} use_llm_check={use_llm_check}"
+        f"Starting cache lookup with mode={mode}, similarity_threshold={similarity_threshold}"
     )
+    
+    # Extract query part if the input is a string
+    if isinstance(current_prompt, str):
+        _, _, current_prompt = parse_prompt_parts(current_prompt)
+    
+    logger.debug(f"Current prompt (query part): {current_prompt[:100]}...")
+    
     mode_cache = await hashing_kv.get_by_id(mode)
     if not mode_cache:
+        logger.debug(f"No cache found for mode: {mode}")
         return None
 
     best_similarity = -1
@@ -380,35 +388,49 @@ async def get_best_cached_response(
     best_prompt = None
     best_cache_id = None
 
-    # Only iterate through cache entries for this mode
+    logger.debug(f"Found {len(mode_cache)} entries in cache to check")
+
     for cache_id, cache_data in mode_cache.items():
-        # Skip if cache_type doesn't match
-        if cache_type and cache_data.get("cache_type") != cache_type:
+        cached_prompt = cache_data.get("original_prompt")
+        if not cached_prompt:
+            logger.debug(f"Skipping cache_id {cache_id}: No original prompt found")
             continue
 
-        if cache_data["embedding"] is None:
-            continue
+        # Extract query part from cached prompt
+        _, _, cached_query = parse_prompt_parts(cached_prompt)
 
-        # Convert cached embedding list to ndarray
-        cached_quantized = np.frombuffer(
-            bytes.fromhex(cache_data["embedding"]), dtype=np.uint8
-        ).reshape(cache_data["embedding_shape"])
-        cached_embedding = dequantize_embedding(
-            cached_quantized,
-            cache_data["embedding_min"],
-            cache_data["embedding_max"],
+        # Calculate similarity based on input type
+        if isinstance(current_prompt, np.ndarray):
+            # For embeddings, use cosine similarity
+            if isinstance(cached_query, str):
+                # If cached prompt is string, we need to get its embedding
+                cached_embedding = await hashing_kv.embedding_func([cached_query])
+                cached_embedding = cached_embedding[0]
+            else:
+                cached_embedding = cached_query
+            similarity = cosine_similarity(current_prompt, cached_embedding)
+        else:
+            # For strings, use Levenshtein distance
+            distance = Levenshtein.distance(str(current_prompt).lower(), str(cached_query).lower())
+            max_len = max(len(str(current_prompt)), len(str(cached_query)))
+            similarity = 1 - (distance / max_len)  # Normalize to 0-1 range
+        
+        logger.debug(
+            f"Cache entry {cache_id[:8]}: similarity={similarity:.4f}\n"
+            f"Cached query: {cached_query[:100]}..."
         )
 
-        similarity = cosine_similarity(current_embedding, cached_embedding)
         if similarity > best_similarity:
             best_similarity = similarity
             best_response = cache_data["return"]
-            best_prompt = cache_data["original_prompt"]
+            best_prompt = cached_query  # Store query part only
             best_cache_id = cache_id
+            logger.debug(f"New best match found! Similarity: {best_similarity:.4f}")
 
     if best_similarity > similarity_threshold:
         # If LLM check is enabled and all required parameters are provided
         if use_llm_check and llm_func and original_prompt and best_prompt:
+            logger.debug("Performing LLM similarity check")
             compare_prompt = PROMPTS["similarity_check"].format(
                 original_prompt=original_prompt, cached_prompt=best_prompt
             )
@@ -417,8 +439,9 @@ async def get_best_cached_response(
                 llm_result = await llm_func(compare_prompt)
                 llm_result = llm_result.strip()
                 llm_similarity = float(llm_result)
+                logger.debug(f"LLM similarity check result: {llm_similarity}")
 
-                # Replace vector similarity with LLM similarity score
+                # Replace Levenshtein similarity with LLM similarity score
                 best_similarity = llm_similarity
                 if best_similarity < similarity_threshold:
                     log_data = {
@@ -433,10 +456,12 @@ async def get_best_cached_response(
                         "threshold": similarity_threshold,
                     }
                     logger.info(json.dumps(log_data, ensure_ascii=False))
+                    logger.debug("Cache entry rejected by LLM check")
                     return None
-            except Exception as e:  # Catch all possible exceptions
+            except Exception as e:
                 logger.warning(f"LLM similarity check failed: {e}")
-                return None  # Return None directly when LLM check fails
+                logger.debug(f"LLM check exception details: {str(e)}")
+                return None
 
         prompt_display = (
             best_prompt[:50] + "..." if len(best_prompt) > 50 else best_prompt
@@ -449,7 +474,13 @@ async def get_best_cached_response(
             "original_prompt": prompt_display,
         }
         logger.info(json.dumps(log_data, ensure_ascii=False))
+        logger.debug(f"Returning cached response with similarity {best_similarity:.4f}")
         return best_response
+
+    logger.debug(
+        f"No suitable cache match found. Best similarity ({best_similarity:.4f}) "
+        f"below threshold ({similarity_threshold})"
+    )
     return None
 
 
@@ -486,6 +517,14 @@ def dequantize_embedding(
     return (quantized * scale + min_val).astype(np.float32)
 
 
+def parse_prompt_parts(prompt: str) -> tuple[str, str, str]:
+    """Parse a prompt of format {doc_names_prefix}::{workspace}::{query}"""
+    parts = prompt.split("::")
+    if len(parts) != 3:
+        return "", "", prompt  # Return full prompt as query if format doesn't match
+    return parts[0], parts[1], parts[2]
+
+
 async def handle_cache(
     hashing_kv,
     args_hash,
@@ -504,17 +543,21 @@ async def handle_cache(
         # Get embedding cache configuration
         embedding_cache_config = hashing_kv.global_config.get(
             "embedding_cache_config",
-            {"enabled": False, "similarity_threshold": 0.95, "use_llm_check": False},
+            {"enabled": False, "similarity_threshold": 0.85, "use_llm_check": False},
         )
         is_embedding_cache_enabled = embedding_cache_config["enabled"]
         use_llm_check = embedding_cache_config.get("use_llm_check", False)
 
         quantized = min_val = max_val = None
         if is_embedding_cache_enabled:
+            # Extract only the query part for embedding
+            _, _, query = parse_prompt_parts(prompt)
             # Use embedding cache
-            current_embedding = await hashing_kv.embedding_func([prompt])
+            current_embedding = await hashing_kv.embedding_func([query])
             llm_model_func = hashing_kv.global_config.get("llm_model_func")
             quantized, min_val, max_val = quantize_embedding(current_embedding[0])
+            
+            # Pass the embedding of just the query part
             best_cached_response = await get_best_cached_response(
                 hashing_kv,
                 current_embedding[0],
@@ -522,8 +565,7 @@ async def handle_cache(
                 mode=mode,
                 use_llm_check=use_llm_check,
                 llm_func=llm_model_func if use_llm_check else None,
-                original_prompt=prompt,
-                cache_type=cache_type,
+                original_prompt=query,  # Pass only query part for similarity check
             )
             if best_cached_response is not None:
                 return best_cached_response, None, None, None
@@ -552,7 +594,6 @@ class CacheData:
     max_val: Optional[float] = None
     mode: str = "default"
     cache_type: str = "query"
-
 
 async def save_to_cache(hashing_kv, cache_data: CacheData):
     if hashing_kv is None or hasattr(cache_data.content, "__aiter__"):
