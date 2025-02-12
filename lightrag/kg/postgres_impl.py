@@ -90,11 +90,6 @@ class PostgreSQLDB:
                 logger.error(f"PostgreSQL database error: {e}")
                 try:
                     logger.info(f"Attempting to create table {k}")
-                    # First check if pgvector extension is installed
-                    if 'vector' in v['ddl'].lower():
-                        await self.execute('CREATE EXTENSION IF NOT EXISTS vector;')
-                        logger.info("Created pgvector extension")
-
                     await self.execute(v['ddl'])
 
                     # Verify the table was actually created
@@ -249,7 +244,7 @@ class PGKVStorage(BaseKVStorage):
             return res
         else:
             return None
-        
+
     async def get_all_docs(self) -> List[Dict[str, Any]]:
         """Get all documents from storage.
 
@@ -264,30 +259,30 @@ class PGKVStorage(BaseKVStorage):
                     WHERE workspace = $1
                     ORDER BY id
                 """
-                
+
                 results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
                 return results if results else []
-            
+
             return []  # Return empty list for other namespaces
-            
+
         except Exception as e:
             logger.error(f"Error getting all documents from {self.namespace}: {e}")
             raise
 
     async def get_all(self) -> dict:
         """Get all entries from the cache
-        
+
         Returns:
             dict: All cache entries organized by mode and id
         """
         if self.namespace == "llm_response_cache":
             sql = f"""
                 SELECT id, original_prompt, return_value as "return", mode
-                FROM {NAMESPACE_TABLE_MAP[self.namespace]} 
+                FROM {NAMESPACE_TABLE_MAP[self.namespace]}
                 WHERE workspace = $1
             """
             results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
-            
+
             # Organize results by mode
             cache_data = {}
             if results:
@@ -296,7 +291,7 @@ class PGKVStorage(BaseKVStorage):
                     if mode not in cache_data:
                         cache_data[mode] = {}
                     cache_data[mode][row["id"]] = row
-                    
+
             return cache_data
         else:
             logger.warning(f"get_all() not implemented for namespace {self.namespace}")
@@ -324,12 +319,12 @@ class PGKVStorage(BaseKVStorage):
         if self.namespace == "text_chunks":
             sql = """SELECT c.id, c.tokens, COALESCE(c.content, '') as content,
                     c.chunk_order_index, c.full_doc_id, f.doc_name
-                    FROM LIGHTRAG_DOC_CHUNKS c 
+                    FROM LIGHTRAG_DOC_CHUNKS c
                     JOIN lightrag_doc_full f ON f.id = c.full_doc_id
                     WHERE c.workspace=$1 AND f.workspace=$1"""
             params = {"workspace": self.db.workspace}
             results = await self.db.query(sql, params, multirows=True)
-            
+
             filtered_results = {}
             if results:
                 for row in results:
@@ -422,7 +417,7 @@ class PGKVStorage(BaseKVStorage):
                 DELETE FROM {table_name}
                 WHERE workspace = $1 AND id IN ({placeholders})
             """
-            
+
             await self.db.execute(sql, {"workspace": self.db.workspace})
             logger.info(f"Successfully deleted {len(ids)} records from {self.namespace}")
         except Exception as e:
@@ -447,10 +442,10 @@ class PGVectorStorage(BaseVectorStorage):
     async def client_storage(self):
         """Return data structure needed for debugging and entity/relationship checks"""
         if self.namespace == "entities":
-            sql = """SELECT id, entity_name, content FROM LIGHTRAG_VDB_ENTITY 
+            sql = """SELECT id, entity_name, content FROM LIGHTRAG_VDB_ENTITY
                     WHERE workspace=$1"""
         elif self.namespace == "relationships":
-            sql = """SELECT id, source_id, target_id, content FROM LIGHTRAG_VDB_RELATION 
+            sql = """SELECT id, source_id, target_id, content FROM LIGHTRAG_VDB_RELATION
                     WHERE workspace=$1"""
         else:
             return {"data": []}
@@ -551,26 +546,26 @@ class PGVectorStorage(BaseVectorStorage):
 
     #################### query method ###############
     async def query(
-        self, 
-        query_text: str, 
-        top_k: int = 5, 
+        self,
+        query_text: str,
+        top_k: int = 5,
         filter_func: Optional[Callable] = None
     ) -> List[Dict]:
         # Generate embedding for query - wrap single string in list
         embedding = await self.embedding_func([query_text])
         # Take first embedding since we only passed one text
         embedding = embedding[0] if isinstance(embedding, np.ndarray) else embedding
-        
+
         # Convert numpy array to list and format for PostgreSQL vector
         embedding_string = ','.join(map(str, embedding.tolist()))
-        
+
         base_sql = f"""
-            SELECT id, content, full_doc_id, 
+            SELECT id, content, full_doc_id,
                    1 - (content_vector <=> '[{embedding_string}]'::vector) as similarity
             FROM {NAMESPACE_TABLE_MAP[self.namespace]}
             WHERE workspace=$1
         """
-        
+
         if filter_func:
             # If filter is provided, get all results and filter in Python
             results = await self.db.query(
@@ -578,7 +573,7 @@ class PGVectorStorage(BaseVectorStorage):
                 {"workspace": self.db.workspace},
                 multirows=True
             )
-            
+
             filtered_results = [r for r in results if filter_func(r)]
             return filtered_results[:top_k]
         else:
@@ -589,7 +584,7 @@ class PGVectorStorage(BaseVectorStorage):
                 multirows=True
             )
             return results if results else []
-    
+
     async def delete(self, ids: list[str]):
         """Delete vectors with specified IDs
 
@@ -616,9 +611,9 @@ class PGVectorStorage(BaseVectorStorage):
                 DELETE FROM {table_name}
                 WHERE workspace = $1 AND id IN ({placeholders})
             """
-            
+
             await self.db.execute(sql, {"workspace": self.db.workspace})
-            
+
             logger.info(f"Successfully deleted {len(ids)} vectors from {self.namespace}")
         except Exception as e:
             logger.error(f"Error while deleting vectors from {self.namespace}: {e}")
@@ -626,23 +621,23 @@ class PGVectorStorage(BaseVectorStorage):
 
     async def get_all_docs(self) -> List[Dict]:
         """Get all documents from the vector storage.
-        
+
         Returns:
             List[Dict]: List of all documents with their metadata
         """
         try:
             # SQL to get all documents based on namespace
             if self.namespace == "chunks":
-                sql = """SELECT id, content_vector, full_doc_id as source_id 
-                        FROM LIGHTRAG_DOC_CHUNKS 
+                sql = """SELECT id, content_vector, full_doc_id as source_id
+                        FROM LIGHTRAG_DOC_CHUNKS
                         WHERE workspace=$1"""
             elif self.namespace == "entities":
-                sql = """SELECT id, content_vector, entity_name as source_id 
-                        FROM LIGHTRAG_VDB_ENTITY 
+                sql = """SELECT id, content_vector, entity_name as source_id
+                        FROM LIGHTRAG_VDB_ENTITY
                         WHERE workspace=$1"""
             elif self.namespace == "relationships":
-                sql = """SELECT id, content_vector, source_id, target_id 
-                        FROM LIGHTRAG_VDB_RELATION 
+                sql = """SELECT id, content_vector, source_id, target_id
+                        FROM LIGHTRAG_VDB_RELATION
                         WHERE workspace=$1"""
             else:
                 logger.warning(f"Unsupported namespace for get_all_docs: {self.namespace}")
@@ -651,7 +646,7 @@ class PGVectorStorage(BaseVectorStorage):
             params = {"workspace": self.db.workspace}
             results = await self.db.query(sql, params, multirows=True)
             return results if results else []
-            
+
         except Exception as e:
             logger.error(f"Error getting all docs from {self.namespace}: {e}")
             return []
@@ -679,7 +674,7 @@ class PGDocStatusStorage(DocStatusStorage):
         else:
             existed = set([element["id"] for element in result])
             return set(data) - existed
-        
+
     async def get(self, doc_id: str) -> Union[DocProcessingStatus, None]:
         """Get document status by ID"""
         result = await self.get_by_id(doc_id)
@@ -743,7 +738,7 @@ class PGDocStatusStorage(DocStatusStorage):
             )
             for element in result
         }
-    
+
     async def get_all_docs(self) -> List[Dict[str, Any]]:
         """Get all document statuses from storage.
 
@@ -757,10 +752,10 @@ class PGDocStatusStorage(DocStatusStorage):
                 WHERE workspace = $1
                 ORDER BY created_at DESC
             """
-            
+
             results = await self.db.query(sql, {"workspace": self.db.workspace}, multirows=True)
             return results if results else []
-            
+
         except Exception as e:
             logger.error(f"Error getting all documents from doc_status: {e}")
             raise
@@ -805,7 +800,7 @@ class PGDocStatusStorage(DocStatusStorage):
                 },
             )
         return data
-    
+
     async def delete(self, ids: list[str]):
         """Delete document status records with specified IDs
 
@@ -822,7 +817,7 @@ class PGDocStatusStorage(DocStatusStorage):
                 DELETE FROM LIGHTRAG_DOC_STATUS
                 WHERE workspace = $1 AND id IN ({placeholders})
             """
-            
+
             await self.db.execute(sql, {"workspace": self.db.workspace})
             logger.info(f"Successfully deleted {len(ids)} records from doc_status")
         except Exception as e:
