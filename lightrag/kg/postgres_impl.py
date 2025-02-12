@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Union, List, Dict, Set, Any, Tuple
+from typing import Union, List, Dict, Set, Any, Tuple, Optional, Callable
 import numpy as np
 
 import pipmaster as pm
@@ -550,20 +550,45 @@ class PGVectorStorage(BaseVectorStorage):
         logger.info("vector data had been saved into postgresql db!")
 
     #################### query method ###############
-    async def query(self, query: str, top_k=5) -> Union[dict, list[dict]]:
-        """从向量数据库中查询数据"""
-        embeddings = await self.embedding_func([query])
-        embedding = embeddings[0]
-        embedding_string = ",".join(map(str, embedding))
-
-        sql = SQL_TEMPLATES[self.namespace].format(embedding_string=embedding_string)
-        params = {
-            "workspace": self.db.workspace,
-            "better_than_threshold": self.cosine_better_than_threshold,
-            "top_k": top_k,
-        }
-        results = await self.db.query(sql, params=params, multirows=True)
-        return results
+    async def query(
+        self, 
+        query_text: str, 
+        top_k: int = 5, 
+        filter_func: Optional[Callable] = None
+    ) -> List[Dict]:
+        # Generate embedding for query - wrap single string in list
+        embedding = await self.embedding_func([query_text])
+        # Take first embedding since we only passed one text
+        embedding = embedding[0] if isinstance(embedding, np.ndarray) else embedding
+        
+        # Convert numpy array to list and format for PostgreSQL vector
+        embedding_string = ','.join(map(str, embedding.tolist()))
+        
+        base_sql = f"""
+            SELECT id, content, full_doc_id, 
+                   1 - (content_vector <=> '[{embedding_string}]'::vector) as similarity
+            FROM {NAMESPACE_TABLE_MAP[self.namespace]}
+            WHERE workspace=$1
+        """
+        
+        if filter_func:
+            # If filter is provided, get all results and filter in Python
+            results = await self.db.query(
+                base_sql + " ORDER BY similarity DESC",
+                {"workspace": self.db.workspace},
+                multirows=True
+            )
+            
+            filtered_results = [r for r in results if filter_func(r)]
+            return filtered_results[:top_k]
+        else:
+            # Standard top-k query
+            results = await self.db.query(
+                base_sql + f" ORDER BY similarity DESC LIMIT {top_k}",
+                {"workspace": self.db.workspace},
+                multirows=True
+            )
+            return results if results else []
     
     async def delete(self, ids: list[str]):
         """Delete vectors with specified IDs

@@ -1501,7 +1501,6 @@ async def naive_query(
     global_config: dict,
     hashing_kv: BaseKVStorage = None,
 ):
-    
     query_result = {}
 
     # Handle cache
@@ -1513,7 +1512,33 @@ async def naive_query(
     if cached_response is not None:
         return cached_response
 
-    results = await chunks_vdb.query(query, top_k=query_param.top_k)
+    # If doc_names filter is specified, get only chunks from those docs
+    if hasattr(query_param, 'doc_names') and query_param.doc_names:
+        # Get doc IDs for the specified doc names
+        sql = """
+            SELECT id FROM LIGHTRAG_DOC_FULL 
+            WHERE workspace=$1 AND doc_name = ANY($2::varchar[])
+        """
+        doc_results = await chunks_vdb.db.query(
+            sql,
+            {"workspace": chunks_vdb.db.workspace, "doc_names": query_param.doc_names},
+            multirows=True
+        )
+        if not doc_results:
+            return PROMPTS["fail_response"]
+        
+        doc_ids = [doc["id"] for doc in doc_results]
+        
+        # Modify vector search to only consider chunks from filtered docs
+        results = await chunks_vdb.query(
+            query, 
+            top_k=query_param.top_k,
+            filter_func=lambda x: x["full_doc_id"] in doc_ids
+        )
+    else:
+        # Original unfiltered search
+        results = await chunks_vdb.query(query, top_k=query_param.top_k)
+
     if not len(results):
         return PROMPTS["fail_response"]
 

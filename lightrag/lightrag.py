@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from functools import partial
-from typing import Dict, List, Optional, Type, cast
+from typing import Dict, List, Optional, Type, cast, Any
 
 from tqdm.asyncio import tqdm as tqdm_async
 
@@ -1069,6 +1069,13 @@ class LightRAG:
         workspace_mgr = WorkspaceManager(self._storage_instances, workspace)
 
         async with workspace_mgr.temporary_workspace():
+            # If doc_names is specified in param, validate they exist
+            if hasattr(param, 'doc_names') and param.doc_names:
+                all_docs = await self.alist_doc_names(workspace=workspace)
+                invalid_docs = [doc for doc in param.doc_names if doc not in all_docs]
+                if invalid_docs:
+                    raise ValueError(f"Invalid document names specified: {invalid_docs}")
+
             if param.mode in ["local", "global", "hybrid"]:
                 response = await kg_query(
                     query,
@@ -1089,6 +1096,7 @@ class LightRAG:
                     prompt=prompt,
                 )
             elif param.mode == "naive":
+                # Add doc_names filter to naive query
                 response = await naive_query(
                     query,
                     self.chunks_vdb,
@@ -1125,6 +1133,7 @@ class LightRAG:
                 )
             else:
                 raise ValueError(f"Unknown mode {param.mode}")
+            
             await self._query_done()
             return response
 
@@ -1618,3 +1627,17 @@ class LightRAG:
             )
         finally:
             tracemalloc.stop()
+
+    async def get_chunks_by_doc_ids(self, doc_ids: List[str]) -> Dict[str, Any]:
+        """Get all chunks belonging to specific document IDs"""
+        sql = """
+            SELECT id, content 
+            FROM LIGHTRAG_DOC_CHUNKS 
+            WHERE workspace=$1 AND full_doc_id = ANY($2::varchar[])
+        """
+        chunks = await self.chunks_vdb.db.query(
+            sql, 
+            {"workspace": self.chunks_vdb.db.workspace, "doc_ids": doc_ids},
+            multirows=True
+        )
+        return {chunk["id"]: chunk for chunk in chunks} if chunks else {}
