@@ -551,19 +551,24 @@ class PGVectorStorage(BaseVectorStorage):
         top_k: int = 5,
         filter_func: Optional[Callable] = None
     ) -> List[Dict]:
-        # Generate embedding for query - wrap single string in list
+        # Generate embedding for query
         embedding = await self.embedding_func([query_text])
-        # Take first embedding since we only passed one text
         embedding = embedding[0] if isinstance(embedding, np.ndarray) else embedding
-
-        # Convert numpy array to list and format for PostgreSQL vector
         embedding_string = ','.join(map(str, embedding.tolist()))
 
+        # Optimized query that joins tables and gets all necessary data in one go
         base_sql = f"""
-            SELECT id, content, full_doc_id,
-                   1 - (content_vector <=> '[{embedding_string}]'::vector) as similarity
-            FROM {NAMESPACE_TABLE_MAP[self.namespace]}
-            WHERE workspace=$1
+            SELECT
+                c.id,
+                COALESCE(c.content, '') as content,
+                c.tokens,
+                c.chunk_order_index,
+                c.full_doc_id,
+                f.doc_name,
+                1 - (c.content_vector <=> '[{embedding_string}]'::vector) as similarity
+            FROM {NAMESPACE_TABLE_MAP[self.namespace]} c
+            JOIN LIGHTRAG_DOC_FULL f ON f.id = c.full_doc_id
+            WHERE c.workspace = $1 AND f.workspace = $1
         """
 
         if filter_func:
@@ -573,7 +578,6 @@ class PGVectorStorage(BaseVectorStorage):
                 {"workspace": self.db.workspace},
                 multirows=True
             )
-
             filtered_results = [r for r in results if filter_func(r)]
             return filtered_results[:top_k]
         else:
