@@ -1405,23 +1405,14 @@ TABLES = {
 	              )"""
     },
     # Tables for tag implementation
-    "LIGHTRAG_TAGS": {
-        "ddl": """CREATE TABLE LIGHTRAG_TAGS (
-                    id SERIAL PRIMARY KEY,
-                    tag_name VARCHAR(255) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(tag_name)
-                )"""
-    },
     "LIGHTRAG_DOC_TAGS": {
         "ddl": """CREATE TABLE LIGHTRAG_DOC_TAGS (
                     doc_id VARCHAR(255) NOT NULL,
                     workspace VARCHAR(255) NOT NULL,
-                    tag_id INTEGER NOT NULL,
+                    tag_name VARCHAR(255) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (doc_id, workspace) REFERENCES LIGHTRAG_DOC_FULL (id, workspace) ON DELETE CASCADE,
-                    FOREIGN KEY (tag_id) REFERENCES LIGHTRAG_TAGS (id) ON DELETE CASCADE,
-                    PRIMARY KEY (doc_id, tag_id, workspace)
+                    PRIMARY KEY (doc_id, tag_name, workspace)
                 )"""
     }
 }
